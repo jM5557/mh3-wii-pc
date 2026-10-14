@@ -51,18 +51,30 @@ if(MH3_PROFILE_FRAME_POINTERS)
   endif()
 endif()
 
-# Supported targets: arm32/arm64 Linux with GLES, and Vita with native GXM.
+# Supported targets: arm32/arm64/x86-64 Linux with GLES, and Vita with native GXM.
 # MH3_ALLOW_UNSUPPORTED_HOST keeps other hosts
 # configurable for development only; they are not a supported product.
-option(MH3_ALLOW_UNSUPPORTED_HOST "Configure on a host other than arm32/arm64 Linux" OFF)
+option(MH3_ALLOW_UNSUPPORTED_HOST "Configure on a host other than arm32/arm64/x86-64 Linux" OFF)
 
-if(NOT VITA AND NOT EMSCRIPTEN AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|armv7l|armv7|armv8l|arm)$"))
+if(NOT VITA AND NOT EMSCRIPTEN AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64|armv7l|armv7|armv8l|arm|x86_64|AMD64|amd64)$"))
   if(NOT MH3_ALLOW_UNSUPPORTED_HOST)
-    message(FATAL_ERROR "MH3 targets arm32/arm64 Linux; this is ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}. "
+    message(FATAL_ERROR "MH3 targets arm32/arm64/x86-64 Linux; this is ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}. "
       "Cross-compile with cmake/toolchains/linux-arm32.cmake or linux-arm64.cmake, or set MH3_ALLOW_UNSUPPORTED_HOST=ON.")
   endif()
 
   message(WARNING "Configuring for unsupported host ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
+# x86-64 (desktop Linux): the translated paired-single code lowers ps_madd and
+# friends to FMA3 and psq byte swaps to SSSE3 (runtime/include/isa), so the
+# baseline is x86-64-v3 (Haswell / Zen 1 and newer). Applied to every C/C++
+# target, Aurora and the fetched dependencies included, so ThinLTO sees one
+# target feature set. Set MH3_X86_64_MARCH=native for a build that only has
+# to run on this machine.
+if(NOT VITA AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+  set(MH3_X86_64_MARCH "x86-64-v3" CACHE STRING "-march for x86-64 builds (needs FMA3 and SSSE3; x86-64-v3 or newer)")
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-march=${MH3_X86_64_MARCH}>")
+  message(STATUS "MH3: x86-64 Linux build, -march=${MH3_X86_64_MARCH}")
 endif()
 
 # Release builds (MH3_DEVELOPMENT=OFF) compile and link with ThinLTO: the game,

@@ -25,6 +25,14 @@
 #include "ppc_isa_config.h"
 #include "ppc_isa_context.h"
 
+// The x86-64 paired-single paths lower ps_madd/ps_msub to one FMA3 instruction
+// and swap psq bytes with SSSE3 pshufb. Without these the error surfaces deep
+// inside an always_inline intrinsic; say what to do instead. runtime/CMakeLists.txt
+// builds x86-64 with -march=x86-64-v3 (MH3_X86_64_MARCH) by default.
+#if defined(__x86_64__) && (!defined(__FMA__) || !defined(__SSSE3__))
+#error "x86-64 builds need FMA3 and SSSE3: compile with -march=x86-64-v3 (or set MH3_X86_64_MARCH)"
+#endif
+
 #include <array>
 #include <cmath>
 #include <cstdint>

@@ -83,6 +83,10 @@ FaultContext Decode(const ucontext_t* uc) {
     }
 
     return {uc->uc_mcontext.pc, uc->uc_mcontext.regs[30], write};
+#elif defined(__x86_64__)
+    // x86-64 has no link register at the faulting instruction; the page-fault
+    // error code's bit 1 is set for writes.
+    return {static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RIP]), 0, (uc->uc_mcontext.gregs[REG_ERR] & 2) != 0};
 #else
     return {uc->uc_mcontext.arm_pc, uc->uc_mcontext.arm_lr, (uc->uc_mcontext.error_code & (1u << 11)) != 0};
 #endif

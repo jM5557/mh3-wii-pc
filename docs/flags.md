@@ -10,6 +10,8 @@ column says which.
 | Variable | Effect | Builds |
 | --- | --- | --- |
 | `MH3_DISC_DIR` | game data directory (default `disc/` next to the executable, written by `--rom`; Vita `ux0:/data/mh3-wii`, whose `disc/` the launcher prepares and then uses) | all |
+| `MH3_DISC_HOME` | where `--rom` prepares and records the game data directory, instead of `disc/` next to the executable (for read-only installs such as the AppImage; `MH3_DISC_DIR` still wins) | Linux |
+| `MH3_FULLSCREEN` | `1` starts borderless fullscreen instead of a window (Alt+Enter toggles either way; the AppImage sets it under gamescope) | Linux |
 | `MH3_USER_DIR` | save/NAND root (default `saves` in the working directory; Vita `ux0:/data/mh3-wii/saves`) | all |
 | `MH3_NATIVE_ASSET_DIR` | a whole-disc converted texture/model set (`native-textures.bin`, `native-texture-map.bin`, `native-models/`) to use instead of the load-time cache | all |
 | `MH3_WIDESCREEN` | `0`: the console's 4:3 setting; default 16:9 ([widescreen](optimizations/rendering/widescreen.md)) | all |

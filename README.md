@@ -1,6 +1,6 @@
-# Monster Hunter Tri for the PS Vita
+# Monster Hunter Tri for the PS Vita and PC
 
-A static recompilation of Monster Hunter Tri (Wii) to native ARM code. The
+A static recompilation of Monster Hunter Tri (Wii) to native ARM and x86-64 code. The
 game's PowerPC code is translated to C++ and linked with a native runtime
 that replaces the Wii's hardware and system software: there is no emulator,
 interpreter or JIT. Rendering goes through native GXM on the PS Vita and
@@ -50,6 +50,34 @@ widescreen, upscaling, MSAA and the frame limit ([launcher](docs/vita-launcher.m
 The VPK holds the translated code and nothing of the disc: the game's
 executable sections (`sys/main.dol`, checked by hash), textures, models,
 sound and movies are read from your image.
+
+## PC: Linux and Steam Deck (x86-64)
+
+One script builds the game from your disc, either natively on Arch Linux or
+as a portable AppImage that runs on SteamOS / Steam Deck and other distros
+from 2022 on. It needs an x86-64-v3 CPU (Intel Haswell / AMD Zen 1 or newer;
+the Steam Deck qualifies) and a GPU driver with OpenGL ES 3.0 (Mesa, NVIDIA).
+
+```sh
+git clone <this repository> mh3-wii && cd mh3-wii
+
+# Arch Linux, native build (installs its packages with pacman):
+scripts/build-linux.sh --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz'
+./mh3 --village
+
+# Portable AppImage (Arch with podman or docker; on SteamOS this is the default):
+scripts/build-linux.sh --rom 'Monster Hunter Tri (Europe) (En,Fr,De,Es,It).rvz' --appimage --install
+dist/MH3-x86_64.AppImage
+```
+
+The AppImage contains no disc data: on its first start it finds the image
+next to itself, in `~/Emulation/roms/wii` (EmuDeck), `~/Games` or
+`~/Downloads`, or takes `--rom`. Saves, the prepared disc data and `mh3.log`
+live in `~/.local/share/mh3-wii/`. On the Steam Deck, add the AppImage (or
+the "Monster Hunter Tri" menu entry from `--install`) to Steam from Desktop
+Mode; in Game Mode it starts fullscreen and plays with Steam Input.
+Everything else (options, packages, how the AppImage is built, the runtime
+flags it sets): [docs/linux-x86_64.md](docs/linux-x86_64.md).
 
 ## Building
 
@@ -114,6 +142,15 @@ board), cross-compiled in a Docker image built from
 
 ```sh
 MH3_EXTRA_CMAKE_ARGS='-DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' scripts/docker-build.sh scripts/build-aurora.sh
+```
+
+Linux, x86-64 (desktop PC, Steam Deck): `scripts/build-linux.sh` does every
+step, from the disc to a native build or an AppImage
+([PC and Steam Deck](#pc-linux-and-steam-deck-x86-64) above). By hand, after
+step 1, on an x86-64 machine (`MH3_ARCH` defaults to `x86_64` there):
+
+```sh
+MH3_EXTRA_CMAKE_ARGS='-DMH3_BUILD_VITA_TEXTURE_PACKER=OFF' scripts/build-aurora.sh   # build/linux-x86_64/MH3
 ```
 
 Like the Vita's, Linux builds are release builds unless `-DMH3_DEVELOPMENT=ON`

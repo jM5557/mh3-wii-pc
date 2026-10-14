@@ -1,0 +1,31 @@
+# Build environment for the portable x86-64 Linux AppImage (scripts/build-linux.sh
+# --appimage). Ubuntu 22.04's glibc 2.35 keeps the result runnable on SteamOS and
+# on distros from 2022 on; clang comes from apt.llvm.org (the README's toolchain,
+# and the PGO profile needs 21+); libstdc++ 12 is linked statically into MH3.
+FROM docker.io/library/ubuntu:22.04
+ARG LLVM_VERSION=21
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget gnupg lsb-release software-properties-common \
+      git python3 python3-pip ninja-build pkg-config file patchelf xz-utils zstd \
+      dotnet-sdk-8.0 \
+      libssl-dev libegl-dev libgles-dev libgl-dev libdrm-dev libgbm-dev \
+      libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev \
+      libxtst-dev libxfixes-dev libxkbcommon-dev libxinerama-dev \
+      libwayland-dev wayland-protocols libdecor-0-dev \
+      libasound2-dev libpulse-dev libudev-dev libdbus-1-dev libusb-1.0-0-dev \
+      libstdc++-12-dev \
+ && rm -rf /var/lib/apt/lists/*
+# LLVM_VERSION <= 15 takes Ubuntu's own packages (no apt.llvm.org; testing only).
+RUN if [ "$LLVM_VERSION" -le 15 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends clang-$LLVM_VERSION lld-$LLVM_VERSION llvm-$LLVM_VERSION; \
+    else \
+      curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh && bash /tmp/llvm.sh $LLVM_VERSION \
+      && apt-get install -y --no-install-recommends clang-$LLVM_VERSION lld-$LLVM_VERSION llvm-$LLVM_VERSION; \
+    fi \
+ && rm -rf /var/lib/apt/lists/* /tmp/llvm.sh
+RUN python3 -m pip install --no-cache-dir 'cmake>=3.28,<4'
+ENV PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
+# The scripts need Python 3.11+ (hashlib.file_digest); 22.04 ships 3.10 as python3.
+RUN apt-get update && apt-get install -y --no-install-recommends python3.11 \
+ && rm -rf /var/lib/apt/lists/* && ln -sf /usr/bin/python3.11 /usr/local/bin/python3

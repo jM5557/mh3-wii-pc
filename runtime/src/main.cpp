@@ -168,7 +168,23 @@ void PrepareGameData(const char* rom) {
         return;
     }
 
-    const auto data = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "disc";
+    // MH3_DISC_HOME moves disc/ out of the executable's directory, for
+    // packages whose executable directory is read-only (an AppImage, a
+    // Flatpak); unlike MH3_DISC_DIR, --rom still prepares and records it.
+    const char* discHome = std::getenv("MH3_DISC_HOME");
+    const auto data = discHome && *discHome ? std::filesystem::path(discHome)
+                                            : std::filesystem::read_symlink("/proc/self/exe").parent_path() / "disc";
+
+    // ProcessDisc publishes disc/ itself (from a .processing staging directory
+    // it creates with its parents) and refuses an existing directory without
+    // its layout file. An empty one, left by an earlier launcher that created
+    // it up front, is removed so --rom can prepare it.
+    if (discHome && *discHome) {
+        std::error_code error;
+
+        if (std::filesystem::is_directory(data, error) && std::filesystem::is_empty(data, error))
+            std::filesystem::remove(data, error);
+    }
 
     if (rom || !VitaLauncher::DiscReady(data)) {
         if (!rom)

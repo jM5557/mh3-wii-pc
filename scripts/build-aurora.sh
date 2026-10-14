@@ -1,6 +1,7 @@
 #!/bin/bash
-# Build the OpenGL ES 3.0 executable for arm32 or arm64 Linux (MH3_ARCH,
-# default arm32): $MH3_BUILD_DIR/MH3, default build/linux-$MH3_ARCH/MH3.
+# Build the OpenGL ES 3.0 executable for arm32, arm64 or x86-64 Linux
+# (MH3_ARCH, default x86_64 on x86-64 Linux, otherwise arm32):
+# $MH3_BUILD_DIR/MH3, default build/linux-$MH3_ARCH/MH3.
 # MH3_EXTRA_CMAKE_ARGS adds CMake options (for example -DMH3_DEVELOPMENT=ON);
 # BUILD_JOBS sets the parallelism. A render thread draws through OpenGL ES 3.0.
 # Run arm32 builds inside scripts/docker-build.sh.

@@ -9,3 +9,5 @@ saves/
 **/bin/
 **/obj/
 __pycache__/
+/dist/
+/mh3

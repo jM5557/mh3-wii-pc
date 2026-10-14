@@ -23,6 +23,7 @@ it to another Wii game.
 - [aurora-dependency.md](aurora-dependency.md): the Aurora copy in
   `aurora-main/`.
 - [web-build.md](web-build.md): the WebAssembly/WebGPU build.
+- [linux-x86_64.md](linux-x86_64.md): x86-64 Linux: the Arch build, the AppImage and the Steam Deck.
 
 ## Development
 

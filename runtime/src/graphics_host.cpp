@@ -313,6 +313,12 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
     // The window starts at the display size; any size shows the same target.
     config.windowWidth = DisplayWidth;
     config.windowHeight = DisplayHeight;
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+    // MH3_FULLSCREEN=1: start borderless fullscreen (Alt+Enter still toggles);
+    // the AppImage sets it under gamescope (Steam Deck Game Mode).
+    if (const char* v = std::getenv("MH3_FULLSCREEN"); v && std::strcmp(v, "1") == 0)
+        config.startFullscreen = true;
+#endif
 #ifdef MH3_DEVELOPMENT
     // MH3_WINDOW_SCALE=n: an n times larger window. It only shows the picture
     // larger: pair it with MH3_RENDER_SCALE to render at that resolution.

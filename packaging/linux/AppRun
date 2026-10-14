@@ -1,0 +1,61 @@
+#!/bin/bash
+# Monster Hunter Tri (mh3-wii) AppImage launcher. Data lives in
+# ${XDG_DATA_HOME:-~/.local/share}/mh3-wii: saves/, disc/ (metadata and the
+# converted-asset cache) and mh3.log. Arguments go to MH3 (--village,
+# --list quests, --rom <image>, ...).
+HERE="$(dirname "$(readlink -f "$0")")"
+data="${XDG_DATA_HOME:-$HOME/.local/share}/mh3-wii"
+# Not disc/: MH3 publishes it on the first --rom and refuses an existing one.
+mkdir -p "$data/saves"
+rmdir "$data/disc" 2>/dev/null || true   # an empty disc/ left by an older launcher
+export MH3_USER_DIR="${MH3_USER_DIR:-$data/saves}"
+export MH3_DISC_HOME="${MH3_DISC_HOME:-$data/disc}"
+# The bundled OpenSSL looks for CA certificates in Ubuntu's place; point it at the host's.
+for f in /etc/ssl/certs/ca-certificates.crt /etc/ssl/cert.pem /etc/pki/tls/certs/ca-bundle.crt; do
+  [[ -f $f ]] && { export SSL_CERT_FILE="${SSL_CERT_FILE:-$f}"; break; }
+done
+[[ -d /etc/ssl/certs ]] && export SSL_CERT_DIR="${SSL_CERT_DIR:-/etc/ssl/certs}"
+# Steam Deck Game Mode (gamescope): start fullscreen. Alt+Enter toggles elsewhere.
+if [[ -n ${GAMESCOPE_WAYLAND_DISPLAY:-} || ${SteamDeck:-0} == 1 || -n ${SteamGamepadUI:-} ]]; then
+  export MH3_FULLSCREEN="${MH3_FULLSCREEN:-1}"
+fi
+
+say() {
+  echo "MH3: $*" >&2
+  echo "MH3: $*" >> "$data/mh3.log"
+  if [[ ! -t 2 ]]; then
+    command -v zenity >/dev/null && zenity --error --no-wrap --title "Monster Hunter Tri" --text "$*" 2>/dev/null && return
+    command -v kdialog >/dev/null && kdialog --title "Monster Hunter Tri" --error "$*" 2>/dev/null
+  fi
+}
+
+# First start (or the recorded image moved): find the disc unless --rom was given.
+has_rom=0
+for a in "$@"; do [[ $a == --rom ]] && has_rom=1; done
+recorded="$(head -n1 "$MH3_DISC_HOME/rom.txt" 2>/dev/null || true)"
+rom_args=()
+if [[ $has_rom -eq 0 && ( -z $recorded || ! -f $recorded ) ]]; then
+  search=()
+  [[ -n ${APPIMAGE:-} ]] && search+=("$(dirname "$APPIMAGE")")
+  search+=("$data" "$HOME/Emulation/roms/wii" "$HOME/Games" "$HOME/Downloads"
+           /run/media/*/Emulation/roms/wii /run/media/deck/*/Emulation/roms/wii)
+  found=""
+  for d in "${search[@]}"; do
+    [[ -d $d ]] || continue
+    while IFS= read -r -d '' f; do
+      name="${f##*/}"
+      if [[ $name == *RMHP08* || $name == *[Mm]onster*[Hh]unter*[Tt]ri* ]]; then found="$f"; break 2; fi
+      if [[ ${name,,} == *.iso && $(head -c 6 "$f" 2>/dev/null) == RMHP08 ]]; then found="$f"; break 2; fi
+    done < <(find "$d" -maxdepth 2 -type f \( -iname '*.rvz' -o -iname '*.iso' -o -iname '*.wia' \) -print0 2>/dev/null)
+  done
+  if [[ -z $found ]]; then
+    say "Disc image not found. Put your European Monster Hunter Tri RVZ/ISO next to the AppImage (or in ~/Emulation/roms/wii), or start it once with: --rom /path/to/image.rvz"
+    exit 1
+  fi
+  echo "MH3: using disc image $found" >&2
+  rom_args=(--rom "$found")
+fi
+
+{ echo; echo "=== $(date) MH3 $*"; } >> "$data/mh3.log"
+cd "$data" || exit 1
+exec "$HERE/usr/bin/MH3" "${rom_args[@]}" "$@" 2> >(tee -a "$data/mh3.log" >&2)

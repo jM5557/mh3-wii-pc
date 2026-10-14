@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Monster Hunter Tri
+Comment=Monster Hunter Tri (Wii), native static recompilation (mh3-wii)
+Exec=MH3
+Icon=mh3-wii
+Categories=Game;
+Terminal=false
