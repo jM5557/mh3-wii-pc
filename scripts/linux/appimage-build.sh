@@ -21,7 +21,9 @@ python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version' ||
 echo "==> Building the translator (.NET)"
 dotnet build -c Release toolchain/translator/src/Translator.Cli 2>&1 | tail -n 3
 
-if [[ $MH3_RETRANSLATE == 1 || ! -f generated/translation.json || ! -f generated/build_shards/shards.cmake ]]; then
+overlays=(generated/rso_overlays/*.cpp)
+if [[ $MH3_RETRANSLATE == 1 || ! -f generated/translation.json || ! -f generated/build_shards/shards.cmake ]] ||
+   [[ ! -f generated/.translation-complete && ( ! -e ${overlays[0]} || ${#overlays[@]} -lt 18 ) ]]; then
   echo "==> Translating the game (PowerPC -> C++, several minutes)"
   TRANSLATE_JOBS="$MH3_JOBS" scripts/translate.sh
 fi

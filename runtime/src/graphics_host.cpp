@@ -244,7 +244,13 @@ void ShutdownGraphics() {
 } // namespace
 
 void PcApplyRenderResolution() {
-    ApplyRenderResolution();
+    // The surface size belongs to the render thread once it runs (aurora
+    // aborts a change from any other): apply it before its next draws, as
+    // the widescreen aspect does. The menu calls this on the game thread.
+    if (initialized)
+        QueueNativeGraphicsTask(NativeTaskOrder::BeforeDraws, [] { ApplyRenderResolution(); });
+    else
+        ApplyRenderResolution();
 }
 
 void PcApplyDisplayMode() {

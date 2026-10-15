@@ -172,7 +172,15 @@ fi
 
 # --- 5. Disc -----------------------------------------------------------------
 need_disc=1
-if [[ $retranslate -eq 0 && -f generated/translation.json && -f generated/build_shards/shards.cmake ]]; then
+# Finished translations leave generated/.translation-complete (older ones: all
+# 18 overlay sources); a partial one (an overlay that failed) runs again.
+translated() {
+  [[ -f generated/translation.json && -f generated/build_shards/shards.cmake ]] || return 1
+  [[ -f generated/.translation-complete ]] && return 0
+  local overlays=(generated/rso_overlays/*.cpp)
+  [[ -e ${overlays[0]} && ${#overlays[@]} -ge 18 ]]
+}
+if [[ $retranslate -eq 0 ]] && translated; then
   need_disc=0   # the game code is already translated; the build no longer reads the disc
 fi
 step "Extracting the disc"
@@ -234,7 +242,8 @@ if [[ $appimage -eq 1 ]]; then
     run_args+=(--user "$(id -u):$(id -g)")
   fi
   run_args+=(-e MH3_BUILD_DIR="$build_dir" -e MH3_APPIMAGE_OUT="$out" -e MH3_APPIMAGE_VERSION="$version"
-             -e MH3_CMAKE_ARGS="${cmake_args[*]}" -e MH3_RETRANSLATE="$retranslate" -e MH3_JOBS="$jobs")
+             -e MH3_CMAKE_ARGS="${cmake_args[*]}" -e MH3_RETRANSLATE="$retranslate" -e MH3_JOBS="$jobs"
+             ${OVERLAY_JOBS:+-e OVERLAY_JOBS="$OVERLAY_JOBS"})
   "$engine" "${run_args[@]}" "$image_tag" bash "$dir/scripts/linux/appimage-build.sh" ||
     die "container build failed; logs: $dir/logs/ (aurora-configure.log, aurora-build.log, translate.log)"
   [[ -f $out ]] || die "the build finished but $out is missing"
@@ -277,7 +286,8 @@ step "Translating the game (PowerPC -> C++, several minutes)"
 if [[ $need_disc -eq 0 ]]; then
   note "generated/ already present (use --retranslate to redo)"
 else
-  TRANSLATE_JOBS="$jobs" scripts/translate.sh || die "translation failed; see $dir/logs/"
+  TRANSLATE_JOBS="$jobs" scripts/translate.sh ||
+    die "translation failed; see $dir/logs/ (\"died with SIGKILL\" means out of memory: rerun with OVERLAY_JOBS=1)"
 fi
 
 # --- 8. Build ----------------------------------------------------------------
