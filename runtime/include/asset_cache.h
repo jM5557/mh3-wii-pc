@@ -43,7 +43,9 @@ class AssetCache {
     // less than StorageWanted; empty otherwise.
     static std::string StorageWarning(const std::filesystem::path& root);
 
-    AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read);
+    // Converted packs go to root/cacheName ("cache"; mods and HD texture
+    // packs get their own, asset_cache.cpp).
+    AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read, const std::string& cacheName = "cache");
     ~AssetCache();
     AssetCache(const AssetCache&) = delete;
 

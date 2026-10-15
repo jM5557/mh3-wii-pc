@@ -231,6 +231,8 @@ Status DiscImage::Load(const std::filesystem::path& root, bool applyNativeTextur
     MH3_RETURN_IF_ERROR(FileBytes(root / "sys/main.dol", dol));
     MH3_RETURN_IF_ERROR(Add(uint64_t(Word(boot, 0x420)) * 4, root / "sys/main.dol", dol));
     MH3_RETURN_IF_ERROR(Add(uint64_t(Word(boot, 0x424)) * 4, root / "sys/fst.bin", uint64_t(Word(boot, 0x428)) * 4));
+    fstOffset = uint64_t(Word(boot, 0x424)) * 4;
+    fstBytes = fst;
 
     if (fst.size() < 12)
         return Status::Error("Truncated disc metadata");
@@ -280,6 +282,8 @@ Status DiscImage::Load(const std::filesystem::path& root, bool applyNativeTextur
 
             if (!fileEntries.emplace(relative, std::pair{uint64_t(offset) * 4, size}).second)
                 return Status::Error("Duplicate FST file name");
+
+            fstIndices[relative] = index;
 
             MH3_RETURN_IF_ERROR(Add(uint64_t(offset) * 4, path, size, !packed));
         } else
@@ -421,6 +425,50 @@ void DiscImage::ApplyNativeTexturePatches(uint64_t offset, std::vector<uint8_t>&
 }
 
 Status DiscImage::ReadRaw(uint64_t offset, uint8_t* output, size_t length) const {
+    if (modBase && offset + length > modBase) {
+        // Replaced files live past the partition (ApplyReplacements).
+        size_t done = 0;
+
+        if (offset < modBase) {
+            done = size_t(modBase - offset);
+            MH3_RETURN_IF_ERROR(ReadRaw(offset, output, done));
+        }
+
+        while (done < length) {
+            const uint64_t at = offset + done;
+            auto it = std::upper_bound(modExtents.begin(), modExtents.end(), at, [](uint64_t value, const Extent& extent) { return value < extent.offset; });
+
+            if (it == modExtents.begin() || at >= (--it)->offset + it->size) {
+                // Alignment padding between replaced files reads as zeros.
+                const auto next = std::upper_bound(modExtents.begin(), modExtents.end(), at, [](uint64_t value, const Extent& extent) { return value < extent.offset; });
+                const size_t count = next == modExtents.end() ? length - done : std::min<uint64_t>(length - done, next->offset - at);
+                std::fill(output + done, output + done + count, 0);
+                done += count;
+                continue;
+            }
+
+            const size_t count = std::min<uint64_t>(length - done, it->offset + it->size - at);
+            DiscFile file;
+            MH3_RETURN_IF_ERROR(file.Open(it->path));
+            MH3_RETURN_IF_ERROR(file.Read(at - it->offset, output + done, count));
+            done += count;
+        }
+
+        return {};
+    }
+
+    MH3_RETURN_IF_ERROR(ReadUnmodified(offset, output, length));
+
+    // The file table with the replaced files' new offsets and sizes.
+    if (!patchedFst.empty() && offset < fstOffset + patchedFst.size() && offset + length > fstOffset) {
+        const uint64_t first = std::max(offset, fstOffset), last = std::min(offset + length, fstOffset + patchedFst.size());
+        std::copy(patchedFst.begin() + (first - fstOffset), patchedFst.begin() + (last - fstOffset), output + (first - offset));
+    }
+
+    return {};
+}
+
+Status DiscImage::ReadUnmodified(uint64_t offset, uint8_t* output, size_t length) const {
     if (packed)
         return ReadPartition(offset, output, length);
 
@@ -541,4 +589,55 @@ uint32_t DiscImage::FileSize(const std::string& name) const {
 uint32_t DiscImage::FileSizeOrZero(const std::string& name) const {
     const auto it = fileEntries.find(name);
     return it == fileEntries.end() ? 0 : it->second.second;
+}
+
+Status DiscImage::ApplyReplacements(const std::vector<Replacement>& replacements) {
+    if (replacements.empty())
+        return {};
+
+    if (fstBytes.empty())
+        return Status::Error("Disc file replacements need a loaded file table");
+
+    // Past the partition and every extracted extent, on a 64 KiB boundary.
+    uint64_t base = partitionSize;
+
+    for (const auto& extent : extents)
+        base = std::max(base, extent.offset + extent.size);
+
+    base = (base + 0xFFFF) & ~uint64_t(0xFFFF);
+    patchedFst = fstBytes;
+    modBase = base;
+    const auto put = [&](size_t at, uint32_t value) {
+        patchedFst[at] = uint8_t(value >> 24);
+        patchedFst[at + 1] = uint8_t(value >> 16);
+        patchedFst[at + 2] = uint8_t(value >> 8);
+        patchedFst[at + 3] = uint8_t(value);
+    };
+
+    for (const auto& replacement : replacements) {
+        const auto entry = fileEntries.find(replacement.name);
+        const auto index = fstIndices.find(replacement.name);
+
+        if (entry == fileEntries.end() || index == fstIndices.end())
+            return Status::Error("Replacement for a file the disc doesn't have: " + replacement.name);
+
+        if (replacement.size > 0xFFFFFFFFull)
+            return Status::Error("Replacement file is too large: " + replacement.path.string());
+
+        // Wii partition offsets are stored as words, so up to 16 GiB.
+        if ((base >> 2) > 0xFFFFFFFFull)
+            return Status::Error("Replacement files don't fit the file table's address range");
+
+        entry->second = {base, uint32_t(replacement.size)};
+        put(size_t(index->second) * 12 + 4, uint32_t(base >> 2));
+        put(size_t(index->second) * 12 + 8, uint32_t(replacement.size));
+        modExtents.push_back({base, replacement.size, replacement.path});
+        base = (base + replacement.size + 0x7FFF) & ~uint64_t(0x7FFF);
+    }
+
+    return {};
+}
+
+const std::vector<uint8_t>& DiscImage::FstBytes() const {
+    return patchedFst.empty() ? fstBytes : patchedFst;
 }

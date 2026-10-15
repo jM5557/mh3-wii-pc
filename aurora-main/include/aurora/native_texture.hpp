@@ -53,6 +53,20 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
 // (not offline packs or movie frames): may change its RGBA8 levels in place.
 using NativeTexturePatch = void (*)(const NativeTextureSource& source, uint8_t* rgba);
 void set_native_texture_patch(NativeTexturePatch patch);
+
+// An image that replaces a source when it becomes a texture (Dolphin-format
+// HD texture packs, texture_replacement.cpp): RGBA8 levels, largest first,
+// at any size. Sampling is unchanged; the larger image simply has more texels.
+struct NativeTextureReplacement {
+  uint32_t width = 0, height = 0, levels = 0;
+  std::vector<uint8_t> rgba;
+};
+
+// Called for each source (not movie frames) before it becomes a texture;
+// returns true with `out` filled to use that image instead. Resident textures
+// may then take up to `budget` bytes (the default keeps the handheld budget).
+using NativeTextureReplacer = bool (*)(const NativeTextureSource& source, NativeTextureReplacement& out);
+void set_native_texture_replacer(NativeTextureReplacer replacer, size_t budget);
 void bind_native_texture(uint32_t unit, const NativeTextureSource& source, const NativeTextureSampler& sampler);
 
 // Bias left for the shader after native sampler bias. Read on the graphics

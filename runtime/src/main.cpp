@@ -11,6 +11,9 @@
 #include "quest_placement.h"
 #include "quest_catalog.h"
 #include "launcher_cheats.h"
+#if defined(MH3_HAS_AURORA) && !defined(__vita__) && !defined(__EMSCRIPTEN__)
+#include "pc_menu.h"
+#endif
 #include "guest_worker.h"
 #include "net/online.h"
 #include <algorithm>
@@ -429,6 +432,10 @@ int main(int argc, char** argv) {
                 break;
             }
 #endif
+#if defined(MH3_HAS_AURORA) && !defined(__vita__) && !defined(__EMSCRIPTEN__)
+        // settings.ini (the in-game menu's): graphics, controls, saved cheats.
+        PcMenu::ApplyStartupSettings();
+#endif
         // --no-damage and --cheat go with any other option.
         const auto noDamage = std::remove_if(argv + 1, argv + argc, [](const char* a) { return std::string_view(a) == "--no-damage"; });
 
@@ -590,21 +597,19 @@ int main(int argc, char** argv) {
 
         // The apploader normally installs the FST in reserved high MEM1.
         // The SDK's DVDOpen walks this guest table, independently of the host
-        // partition reader. Keep it outside both advertised MEM1 arenas.
-        const char* discOverride = std::getenv("MH3_DISC_DIR");
-        const auto fstPath = std::filesystem::path(discOverride ? discOverride : "Assets/DATA") / "sys/fst.bin";
-        std::ifstream fst(fstPath, std::ios::binary | std::ios::ate);
-        const auto fstLength = fst ? fst.tellg() : std::streampos(-1);
+        // partition reader. Keep it outside both advertised MEM1 arenas. It is
+        // the disc image's table, with the offsets and sizes of any files
+        // mods replace (DiscImage::ApplyReplacements, mods.h).
+        const auto& fstBytes = GameDiscImage().FstBytes();
 
-        if (fstLength < 12 || fstLength > 1024 * 1024)
+        if (fstBytes.size() < 12 || fstBytes.size() > 1024 * 1024)
             MH3_THROW(std::runtime_error("Invalid or missing boot FST"));
 
-        const uint32_t fstSize = static_cast<uint32_t>(fstLength);
+        const uint32_t fstSize = static_cast<uint32_t>(fstBytes.size());
         const uint32_t arenaHi = (0x81800000u - fstSize) & ~31u;
-        fst.seekg(0);
-        fst.read(reinterpret_cast<char*>(Memory::GetPointer(arenaHi, fstSize)), fstSize);
+        std::memcpy(Memory::GetPointer(arenaHi, fstSize), fstBytes.data(), fstSize);
 
-        if (!fst || Memory::Read8(arenaHi) != 1 || Memory::Read32(arenaHi + 8) < 1 || uint64_t(Memory::Read32(arenaHi + 8)) * 12 > fstSize)
+        if (Memory::Read8(arenaHi) != 1 || Memory::Read32(arenaHi + 8) < 1 || uint64_t(Memory::Read32(arenaHi + 8)) * 12 > fstSize)
             MH3_THROW(std::runtime_error("Invalid boot FST root"));
 
         Memory::Write32(0x80000038, arenaHi);

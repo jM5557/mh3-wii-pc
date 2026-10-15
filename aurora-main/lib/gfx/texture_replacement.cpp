@@ -6,6 +6,7 @@
 #include "texture_convert.hpp"
 
 #include <aurora/fast_map.h>
+#include <aurora/native_texture.hpp>
 #include <fmt/format.h>
 
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <filesystem>
 #include <list>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string_view>
 
@@ -192,23 +194,13 @@ uint32_t texture_base_level_size(const GXTexObj_& obj) noexcept {
   }
 }
 
-std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexcept {
-  if (!is_palette_format(obj.format()) || obj.tlut >= s_loadedTluts.size()) {
-    return std::nullopt;
-  }
-
-  const auto& tlut = s_loadedTluts[obj.tlut];
-  const uint32_t textureSize = texture_base_level_size(obj);
-  const auto* textureData = static_cast<const uint8_t*>(obj.data);
-
-  if (!tlut.valid || textureData == nullptr || textureSize == 0) {
-    return std::nullopt;
-  }
-
+// Dolphin's palette hash: XXH64 of the palette entries the image's indices
+// use (lowest to highest), as stored in memory.
+std::optional<uint64_t> tlut_range_hash(uint32_t format, const uint8_t* textureData, uint32_t textureSize, const uint8_t* tlut, size_t tlutBytes) noexcept {
   uint32_t minIndex = 0xffff;
   uint32_t maxIndex = 0;
 
-  switch (obj.format()) {
+  switch (format) {
   case GX_TF_C4:
     for (uint32_t i = 0; i < textureSize; ++i) {
       const uint32_t lowNibble = textureData[i] & 0xf;
@@ -228,9 +220,7 @@ std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexc
     break;
   case GX_TF_C14X2:
     for (uint32_t i = 0; i + sizeof(uint16_t) <= textureSize; i += sizeof(uint16_t)) {
-      uint16_t value = 0;
-      std::memcpy(&value, textureData + i, sizeof(value));
-      const uint32_t index = bswap(value) & 0x3fff;
+      const uint32_t index = (uint32_t(textureData[i]) << 8 | textureData[i + 1]) & 0x3fff;
       minIndex = std::min(minIndex, index);
       maxIndex = std::max(maxIndex, index);
     }
@@ -240,14 +230,34 @@ std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexc
     return std::nullopt;
   }
 
-  size_t tlutSize = 2 * (static_cast<size_t>(maxIndex) + 1 - minIndex);
-  const size_t tlutOffset = 2 * static_cast<size_t>(minIndex);
-
-  if (tlutOffset + tlutSize > tlut.data.size()) {
+  if (minIndex > maxIndex) {
     return std::nullopt;
   }
 
-  return XXH64(tlut.data.data() + tlutOffset, tlutSize, 0);
+  const size_t tlutSize = 2 * (static_cast<size_t>(maxIndex) + 1 - minIndex);
+  const size_t tlutOffset = 2 * static_cast<size_t>(minIndex);
+
+  if (tlutOffset + tlutSize > tlutBytes) {
+    return std::nullopt;
+  }
+
+  return XXH64(tlut + tlutOffset, tlutSize, 0);
+}
+
+std::optional<uint64_t> compute_referenced_tlut_hash(const GXTexObj_& obj) noexcept {
+  if (!is_palette_format(obj.format()) || obj.tlut >= s_loadedTluts.size()) {
+    return std::nullopt;
+  }
+
+  const auto& tlut = s_loadedTluts[obj.tlut];
+  const uint32_t textureSize = texture_base_level_size(obj);
+  const auto* textureData = static_cast<const uint8_t*>(obj.data);
+
+  if (!tlut.valid || textureData == nullptr || textureSize == 0) {
+    return std::nullopt;
+  }
+
+  return tlut_range_hash(obj.format(), textureData, textureSize, tlut.data.data(), tlut.data.size());
 }
 
 const TlutMetadata* get_loaded_tlut(const GXTexObj_& obj) noexcept {
@@ -433,6 +443,11 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
     return std::nullopt;
   }
 
+  // A DDS with its own mip chain needs no _mipN sidecar files.
+  if (base->mips > 1) {
+    return base;
+  }
+
   std::vector<ConvertedTexture> more;
   std::error_code ec;
 
@@ -533,21 +548,18 @@ void evict_replacement_cache_if_needed() noexcept {
 }
 
 void build_index() noexcept {
-  if (!g_config.allowTextureReplacements) {
+  if (!g_config.allowTextureReplacements && !g_config.allowTextureDumps) {
     return;
   }
 
-  auto userPath = fs_path_from_string(g_config.userPath);
-  auto cachePath = fs_path_from_string(g_config.cachePath);
-
-  s_replacementRoot = userPath / "texture_replacements";
-  s_dumpRoot = cachePath / "texture_dumps";
-
-  if (!ensure_directory(s_replacementRoot)) {
-    return;
-  }
+  s_replacementRoot = g_config.textureReplacementPath ? fs_path_from_string(g_config.textureReplacementPath) : fs_path_from_string(g_config.userPath) / "texture_replacements";
+  s_dumpRoot = g_config.textureDumpPath ? fs_path_from_string(g_config.textureDumpPath) : fs_path_from_string(g_config.cachePath) / "texture_dumps";
 
   if (g_config.allowTextureDumps && !ensure_directory(s_dumpRoot)) {
+    s_dumpRoot.clear();
+  }
+
+  if (!g_config.allowTextureReplacements || !ensure_directory(s_replacementRoot)) {
     return;
   }
 
@@ -690,11 +702,179 @@ bool report_missing_key(const RuntimeTextureKey& key, const GXTexObj_& obj) noex
   return true;
 }
 
+// ---- Native textures (aurora/native_texture.hpp) ----
+// Called on the render thread for each new resident texture. The index is
+// read-only after initialize; the native path keeps its own miss records.
+std::mutex s_nativeLock;
+FastSet<RuntimeTextureKey> s_nativeFailed;
+FastSet<RuntimeTextureKey> s_nativeReported;
+
+// Box-filtered levels below a single replacement image, down to 1x1, so a
+// mipmapped original stays mipmapped.
+void append_box_mips(ConvertedTexture& image) {
+  std::vector<uint8_t> levels(image.data.data(), image.data.data() + image.data.size());
+  uint32_t w = image.width, h = image.height, mips = 1;
+  size_t source = 0;
+
+  while (w > 1 || h > 1) {
+    const uint32_t nw = std::max(w >> 1, 1u), nh = std::max(h >> 1, 1u);
+    const size_t at = levels.size();
+    levels.resize(at + size_t(nw) * nh * 4);
+
+    for (uint32_t y = 0; y < nh; ++y) {
+      for (uint32_t x = 0; x < nw; ++x) {
+        for (uint32_t c = 0; c < 4; ++c) {
+          uint32_t sum = 0;
+
+          for (uint32_t dy = 0; dy < 2; ++dy) {
+            for (uint32_t dx = 0; dx < 2; ++dx) {
+              const uint32_t sx = std::min(x * 2 + dx, w - 1), sy = std::min(y * 2 + dy, h - 1);
+              sum += levels[source + (size_t(sy) * w + sx) * 4 + c];
+            }
+          }
+
+          levels[at + (size_t(y) * nw + x) * 4 + c] = uint8_t((sum + 2) / 4);
+        }
+      }
+    }
+
+    source = at;
+    w = nw;
+    h = nh;
+    ++mips;
+  }
+
+  ByteBuffer data{levels.size()};
+  std::memcpy(data.data(), levels.data(), levels.size());
+  image.data = std::move(data);
+  image.mips = mips;
+}
+
+std::string native_dump_filename(const RuntimeTextureKey& key, bool mipmapped) {
+  const std::string_view m = mipmapped ? "_m" : "";
+
+  if (key.hasTlut) {
+    return fmt::format("tex1_{}x{}{}_{:016x}_{:016x}_{}.dds", key.width, key.height, m, key.textureHash, key.tlutHash, key.format);
+  }
+
+  return fmt::format("tex1_{}x{}{}_{:016x}_{}.dds", key.width, key.height, m, key.textureHash, key.format);
+}
+
+void dump_native_texture(const RuntimeTextureKey& key, const NativeTextureSource& source, uint32_t baseBytes) noexcept {
+  const ArrayRef<uint8_t> bytes{source.bytes.data(), baseBytes};
+  ConvertedTexture pixels;
+
+  if (key.hasTlut) {
+    if (source.palette_format > 2 || !source.palette_entries || source.palette.size() < size_t(source.palette_entries) * 2) {
+      return;
+    }
+
+    pixels = convert_texture_palette(source.format, source.width, source.height, 1, bytes, static_cast<GXTlutFmt>(source.palette_format), source.palette_entries,
+                                     {source.palette.data(), size_t(source.palette_entries) * 2});
+  } else {
+    pixels = convert_texture(source.format, source.width, source.height, 1, bytes);
+  }
+
+  if (pixels.format != gl::Format::RGBA8 || pixels.data.size() < size_t(source.width) * source.height * 4) {
+    return;
+  }
+
+  dds::write_rgba8_dds(s_dumpRoot / native_dump_filename(key, source.levels > 1), source.width, source.height, {pixels.data.data(), size_t(source.width) * source.height * 4});
+}
+
+bool replace_native(const NativeTextureSource& source, NativeTextureReplacement& out) {
+  // The GX texture formats (no Z formats); others never come from a texture pack.
+  constexpr uint32_t kHashable = 1u << GX_TF_I4 | 1u << GX_TF_I8 | 1u << GX_TF_IA4 | 1u << GX_TF_IA8 | 1u << GX_TF_RGB565 | 1u << GX_TF_RGB5A3 | 1u << GX_TF_RGBA8 |
+                                 1u << GX_TF_C4 | 1u << GX_TF_C8 | 1u << GX_TF_C14X2 | 1u << GX_TF_CMPR;
+
+  if (source.format > GX_TF_CMPR || !(kHashable >> source.format & 1) || !source.width || !source.height || source.width > 1024 || source.height > 1024) {
+    return false;
+  }
+
+  const bool replacing = !s_replacementIndex.empty(), dumping = g_config.allowTextureDumps && !s_dumpRoot.empty();
+
+  if (!replacing && !dumping) {
+    return false;
+  }
+
+  // Dolphin hashes the base level as stored: whole tiles (TexDecoder_GetTextureSizeInBytes).
+  const auto baseBytes = uint32_t(native_texture_source_size(source.format, source.width, source.height, 1));
+
+  if (!baseBytes || source.bytes.size() < baseBytes) {
+    return false;
+  }
+
+  RuntimeTextureKey key{
+      .textureHash = XXH64(source.bytes.data(), baseBytes, 0),
+      .width = source.width,
+      .height = source.height,
+      .hasTlut = is_palette_format(source.format),
+      .format = source.format,
+  };
+
+  if (key.hasTlut) {
+    key.tlutHash = tlut_range_hash(source.format, source.bytes.data(), baseBytes, source.palette.data(), source.palette.size()).value_or(0);
+  }
+
+  const auto* path = replacing ? find_replacement_path(key) : nullptr;
+
+  if (path == nullptr) {
+    bool first;
+    {
+      std::lock_guard lock(s_nativeLock);
+      first = s_nativeReported.insert(key).second;
+    }
+
+    if (first && dumping) {
+      dump_native_texture(key, source, baseBytes);
+    }
+
+    return false;
+  }
+
+  {
+    std::lock_guard lock(s_nativeLock);
+
+    if (s_nativeFailed.contains(key)) {
+      return false;
+    }
+  }
+
+  auto image = load_replacement(*path);
+
+  if (!image.has_value() || image->format != gl::Format::RGBA8 || image->width > 16384 || image->height > 16384) {
+    std::lock_guard lock(s_nativeLock);
+    s_nativeFailed.insert(key);
+    return false;
+  }
+
+  if (source.levels > 1 && image->mips == 1) {
+    append_box_mips(*image);
+  }
+
+  out.width = image->width;
+  out.height = image->height;
+  out.levels = image->mips;
+  out.rgba.assign(image->data.data(), image->data.data() + image->data.size());
+  return true;
+}
+
 void initialize() noexcept {
   build_index();
+
+  // Native textures may then take up to 2 GiB of resident storage.
+  if (!s_replacementIndex.empty() || (g_config.allowTextureDumps && !s_dumpRoot.empty())) {
+    set_native_texture_replacer(replace_native, size_t(2) << 30);
+  }
 }
 
 void shutdown() noexcept {
+  set_native_texture_replacer(nullptr, 0);
+  {
+    std::lock_guard lock(s_nativeLock);
+    s_nativeFailed.clear();
+    s_nativeReported.clear();
+  }
   s_replacementIndex.clear();
   s_replacementCache.clear();
   s_failedKeys.clear();

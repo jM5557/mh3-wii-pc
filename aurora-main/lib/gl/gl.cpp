@@ -1,4 +1,5 @@
 #include "gl.hpp"
+#include "imgui_renderer.hpp"
 #include <aurora/fatal.hpp>
 
 #include "../internal.hpp"
@@ -408,6 +409,7 @@ void shutdown() noexcept {
     Log.fatal("GL shutdown called outside the game thread");
 
   post([] {
+    shutdown_imgui_overlay();
     g_nativePrograms[0].reset();
     g_nativePrograms[1].reset();
 
@@ -1357,6 +1359,9 @@ void present(const TexturePtr& source, int32_t x, int32_t y, int32_t width, int3
     glBlitFramebuffer(0, 0, static_cast<GLint>(source->width), static_cast<GLint>(source->height), x, top, x + width, top - height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
   }
+
+  // The embedder's ImGui overlay (aurora/imgui.h), over the whole drawable.
+  draw_imgui_overlay(drawableWidth, drawableHeight);
 
   // Submit the scene without waiting for completion. The next game frame can
   // run while the GPU consumes it; frameskip polls this fence with timeout 0.

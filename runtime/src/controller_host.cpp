@@ -2,6 +2,9 @@
 #include "fatal.h"
 #include "dev_options.h"
 #include "../native/mh3_classic_map.h"
+#if defined(MH3_HAS_AURORA) && !defined(__vita__)
+#include "pc_input.h"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -186,104 +189,11 @@ ClassicControllerSample ReadLiveController() {
     (void)sample;
     return ReadVitaController();
 #elif defined(MH3_HAS_AURORA)
-    // The keyboard and the first SDL gamepad, as the Classic Controller on
-    // channel 0 (docs/optimizations/system/controller-input.md, docs/vita-controls.md).
-    sample.connected = true;
-
-    if (!SDL_WasInit(SDL_INIT_VIDEO))
-        return sample;
-
-    if (!SDL_WasInit(SDL_INIT_GAMEPAD) && !SDL_InitSubSystem(SDL_INIT_GAMEPAD))
-        MH3_THROW(std::runtime_error(std::string("SDL controller initialization: ") + SDL_GetError()));
-
-    const bool* keys = SDL_GetKeyboardState(nullptr);
-
-    if (SDL_GetKeyboardFocus()) {
-        static const struct {
-            SDL_Scancode key;
-            uint16_t button;
-        } bindings[] = {
-            {SDL_SCANCODE_SPACE, MH3_CL_A},       {SDL_SCANCODE_LSHIFT, MH3_CL_B},     {SDL_SCANCODE_E, MH3_CL_X},
-            {SDL_SCANCODE_F, MH3_CL_Y},           {SDL_SCANCODE_Q, MH3_CL_L},          {SDL_SCANCODE_R, MH3_CL_R},
-            {SDL_SCANCODE_Z, MH3_CL_ZL},          {SDL_SCANCODE_C, MH3_CL_ZR},         {SDL_SCANCODE_RETURN, MH3_CL_PLUS},
-            {SDL_SCANCODE_BACKSPACE, MH3_CL_MINUS}, {SDL_SCANCODE_ESCAPE, MH3_CL_HOME}, {SDL_SCANCODE_HOME, MH3_CL_HOME},
-            {SDL_SCANCODE_UP, MH3_CL_UP},         {SDL_SCANCODE_DOWN, MH3_CL_DOWN},    {SDL_SCANCODE_LEFT, MH3_CL_LEFT},
-            {SDL_SCANCODE_RIGHT, MH3_CL_RIGHT},
-        };
-
-        for (const auto& binding : bindings)
-            if (keys[binding.key])
-                sample.buttons |= binding.button;
-        sample.leftX = int16_t((int(keys[SDL_SCANCODE_D]) - int(keys[SDL_SCANCODE_A])) * 511);
-        sample.leftY = int16_t((int(keys[SDL_SCANCODE_W]) - int(keys[SDL_SCANCODE_S])) * 511);
-        sample.rightX = int16_t((int(keys[SDL_SCANCODE_L]) - int(keys[SDL_SCANCODE_J])) * 511);
-        sample.rightY = int16_t((int(keys[SDL_SCANCODE_I]) - int(keys[SDL_SCANCODE_K])) * 511);
-    }
-
-    static SDL_Gamepad* pad = nullptr;
-
-    if (pad && !SDL_GamepadConnected(pad)) {
-        SDL_CloseGamepad(pad);
-        pad = nullptr;
-    }
-
-    if (!pad) {
-        int count = 0;
-        auto* ids = SDL_GetGamepads(&count);
-
-        if (ids && count)
-            pad = SDL_OpenGamepad(ids[0]);
-
-        SDL_free(ids);
-    }
-
-    if (pad) {
-        // Face buttons by position (east = A, south = B, north = X, west =
-        // Y). The analog triggers are the Classic L/R triggers, the bumpers
-        // ZL/ZR, as on the original Classic Controller.
-        static const struct {
-            SDL_GamepadButton source;
-            uint16_t button;
-        } bindings[] = {
-            {SDL_GAMEPAD_BUTTON_EAST, MH3_CL_A},           {SDL_GAMEPAD_BUTTON_SOUTH, MH3_CL_B},          {SDL_GAMEPAD_BUTTON_NORTH, MH3_CL_X},
-            {SDL_GAMEPAD_BUTTON_WEST, MH3_CL_Y},           {SDL_GAMEPAD_BUTTON_DPAD_UP, MH3_CL_UP},       {SDL_GAMEPAD_BUTTON_DPAD_DOWN, MH3_CL_DOWN},
-            {SDL_GAMEPAD_BUTTON_DPAD_LEFT, MH3_CL_LEFT},   {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, MH3_CL_RIGHT}, {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, MH3_CL_ZL},
-            {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, MH3_CL_ZR}, {SDL_GAMEPAD_BUTTON_START, MH3_CL_PLUS},      {SDL_GAMEPAD_BUTTON_BACK, MH3_CL_MINUS},
-            {SDL_GAMEPAD_BUTTON_GUIDE, MH3_CL_HOME},
-        };
-
-        for (const auto& binding : bindings)
-            if (SDL_GetGamepadButton(pad, binding.source))
-                sample.buttons |= binding.button;
-        const auto axis = [&](SDL_GamepadAxis source) {
-            return std::clamp(SDL_GetGamepadAxis(pad, source) / 32767.0f, -1.0f, 1.0f);
-        };
-
-        // SDL's y axes point down; the Classic report's point up.
-        if (!sample.leftX && !sample.leftY)
-            mh3_classic_stick(axis(SDL_GAMEPAD_AXIS_LEFTX), -axis(SDL_GAMEPAD_AXIS_LEFTY), &mh3_gamepad_stick_curve, &sample.leftX, &sample.leftY);
-
-        if (!sample.rightX && !sample.rightY)
-            mh3_classic_stick(axis(SDL_GAMEPAD_AXIS_RIGHTX), -axis(SDL_GAMEPAD_AXIS_RIGHTY), &mh3_gamepad_stick_curve, &sample.rightX, &sample.rightY);
-
-        sample.triggerL = uint8_t(std::lround(std::max(0.0f, axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER)) * 255));
-        sample.triggerR = uint8_t(std::lround(std::max(0.0f, axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) * 255));
-
-        // The Classic's digital L/R close at the end of the trigger's travel;
-        // half way is kinder to worn gamepad triggers.
-        if (sample.triggerL > 127)
-            sample.buttons |= MH3_CL_L;
-
-        if (sample.triggerR > 127)
-            sample.buttons |= MH3_CL_R;
-    }
-
-    // A digital L/R (keyboard) is a fully pressed trigger.
-    if (sample.buttons & MH3_CL_L)
-        sample.triggerL = 255;
-
-    if (sample.buttons & MH3_CL_R)
-        sample.triggerR = 255;
+    // The bound keyboard keys, mouse buttons and mouse look, and the chosen
+    // SDL gamepad, as the Classic Controller on channel 0 (pc_input.cpp,
+    // PcSettings; docs/optimizations/system/controller-input.md).
+    (void)sample;
+    return PcInput::Read();
 #endif
     return sample;
 }

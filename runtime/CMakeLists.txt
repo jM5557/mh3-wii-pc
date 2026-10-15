@@ -322,6 +322,10 @@ target_sources(MH3 PRIVATE src/model_vertex_sources.cpp native/mh3_vertex_source
 target_sources(MH3 PRIVATE src/lighting.cpp native/mh3_lighting.c)
 target_sources(MH3 PRIVATE src/native_frame.cpp)
 target_sources(MH3 PRIVATE src/render_mode.cpp native/mh3_render_mode.c)
+# PC settings (settings.ini), content folders and file-replacement mods
+# (docs/pc-features.md). Plain C++: every platform builds them (the frame
+# pacer reads the settings; the Vita and web builds keep their defaults).
+target_sources(MH3 PRIVATE src/pc_settings.cpp src/pc_paths.cpp src/mods.cpp)
 target_sources(MH3 PRIVATE src/native_display_utilities.cpp)
 target_sources(MH3 PRIVATE src/lens_flare.cpp)
 target_sources(MH3 PRIVATE src/native_thp.cpp native/mh3_thp_video.c)
@@ -427,12 +431,23 @@ if(TARGET aurora::core)
   target_compile_definitions(MH3 PRIVATE MH3_HAS_AURORA=1)
   target_link_libraries(MH3 PRIVATE aurora::core aurora::gx aurora::vi)
 
+  # The PC in-game menu (F1 / L3+R3), rebindable SDL input and Gecko codes.
+  if(NOT VITA AND NOT EMSCRIPTEN)
+    target_sources(MH3 PRIVATE src/pc_input.cpp src/pc_menu.cpp src/gecko.cpp)
+  endif()
+
   if(NOT VITA AND NOT EMSCRIPTEN)
     add_executable(mh3_native_frame_statistics_check
       ../tests/native/test_native_frame_statistics.cpp src/native_frame_statistics.cpp)
     target_include_directories(mh3_native_frame_statistics_check PRIVATE include)
     target_compile_features(mh3_native_frame_statistics_check PRIVATE cxx_std_20)
     add_test(NAME mh3_native_frame_statistics_check COMMAND mh3_native_frame_statistics_check)
+    # Dolphin texture pack names on the native texture path.
+    add_executable(mh3_texture_pack_names_check ../tests/native/test_texture_pack_names.cpp)
+    target_include_directories(mh3_texture_pack_names_check PRIVATE "${MH3_AURORA_ROOT}/lib")
+    target_link_libraries(mh3_texture_pack_names_check PRIVATE "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
+    target_compile_features(mh3_texture_pack_names_check PRIVATE cxx_std_20)
+    add_test(NAME mh3_texture_pack_names_check COMMAND mh3_texture_pack_names_check)
     add_executable(mh3_fast_map_check ../tests/native/test_fast_map.cpp)
     target_include_directories(mh3_fast_map_check PRIVATE "${MH3_AURORA_ROOT}/include")
     target_compile_features(mh3_fast_map_check PRIVATE cxx_std_20)
@@ -686,7 +701,7 @@ if(TARGET aurora::core)
 
     add_executable(MH3LauncherTests EXCLUDE_FROM_ALL src/launcher_tests.cpp
       src/launcher_support.cpp src/quest_catalog.cpp src/launcher_disc.cpp src/launcher_textures.cpp src/launcher_models.cpp src/disc_image.cpp
-      src/rom_image.cpp src/asset_cache.cpp src/button_glyphs.cpp
+      src/rom_image.cpp src/asset_cache.cpp src/button_glyphs.cpp src/mods.cpp src/pc_paths.cpp src/pc_settings.cpp
       native/mh3_prepare_model.c native/mh3_prepare_corners.c native/mh3_prepare_skin.c native/mh3_prepare_writer.c native/mh3_model_resources.c
       native/mh3_vertex_sources.c native/mh3_mesh_pack.c native/mh3_material_pack.c native/mh3_model_catalog.c)
     target_include_directories(MH3LauncherTests PRIVATE include .. "${MH3_AURORA_ROOT}/lib")
@@ -700,11 +715,27 @@ if(TARGET aurora::core)
   # The SDL keyboard/gamepad mapping: the Vita reads its own pad
   # (vita/vita_controller.cpp).
   if(NOT VITA)
-    add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp native/mh3_classic_map.c)
+    add_executable(MH3ControllerHostTest src/controller_sdl_tests.cpp src/controller_host.cpp src/pc_input.cpp src/pc_settings.cpp native/mh3_classic_map.c)
     target_include_directories(MH3ControllerHostTest PRIVATE include)
     target_compile_definitions(MH3ControllerHostTest PRIVATE MH3_HAS_AURORA=1)
     target_link_libraries(MH3ControllerHostTest PRIVATE ${AURORA_SDL3_TARGET})
     add_test(NAME mh3_sdl_controller_test COMMAND MH3ControllerHostTest)
+
+    # PC features without the game: the settings file, Gecko codes and
+    # file-replacement mods on a small extracted disc.
+    add_executable(mh3_pc_settings_check ../tests/native/test_pc_settings.cpp src/pc_settings.cpp)
+    target_include_directories(mh3_pc_settings_check PRIVATE include)
+    target_compile_features(mh3_pc_settings_check PRIVATE cxx_std_20)
+    add_test(NAME mh3_pc_settings_check COMMAND mh3_pc_settings_check)
+    add_executable(mh3_gecko_check ../tests/native/test_gecko.cpp src/gecko.cpp)
+    target_include_directories(mh3_gecko_check PRIVATE include)
+    target_compile_definitions(mh3_gecko_check PRIVATE MH3_GECKO_STANDALONE=1)
+    target_compile_features(mh3_gecko_check PRIVATE cxx_std_20)
+    add_test(NAME mh3_gecko_check COMMAND mh3_gecko_check)
+    add_executable(mh3_disc_replacements_check ../tests/native/test_disc_replacements.cpp src/disc_image.cpp src/mods.cpp)
+    target_include_directories(mh3_disc_replacements_check PRIVATE include src ..)
+    target_compile_features(mh3_disc_replacements_check PRIVATE cxx_std_20)
+    add_test(NAME mh3_disc_replacements_check COMMAND mh3_disc_replacements_check)
   endif()
 endif()
 

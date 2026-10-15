@@ -128,6 +128,13 @@ typedef struct {
   // Optional directory for the portable GX pipeline database. When null, the
   // database is stored in cachePath with Dawn's machine-specific cache.
   const char* pipelineCachePath;
+
+  // Optional texture pack and dump directories (Dolphin's Load/Textures/<ID>
+  // and Dump/Textures/<ID> layout). When null they are userPath's
+  // texture_replacements and cachePath's texture_dumps. Read during
+  // aurora_initialize only.
+  const char* textureReplacementPath;
+  const char* textureDumpPath;
 } AuroraConfig;
 
 typedef enum {

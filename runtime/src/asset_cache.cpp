@@ -1,4 +1,9 @@
 #include "asset_cache.h"
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+#include "mods.h"
+#include "pc_paths.h"
+#include "pc_settings.h"
+#endif
 #include "fatal.h"
 #include "fs_status.h"
 #include "disc_image.h"
@@ -330,7 +335,8 @@ struct AssetCache::Impl {
     std::filesystem::path SkipPath(const Source& s) const { return cache / "models" / (Hex16(s.file.offset) + "-" + std::to_string(s.firstModel) + ".skip"); }
     std::filesystem::path ExtractPath(const Extract& e) const { return cache / "files" / (Hex16(e.file.offset) + "-" + std::to_string(e.file.bytes) + ".bin"); }
 
-    Impl(const std::filesystem::path& r, std::vector<SourceFile> files, std::vector<SourceFile> streams, RawRead raw) : root(r), cache(r / "cache"), read(std::move(raw)) {
+    Impl(const std::filesystem::path& r, std::vector<SourceFile> files, std::vector<SourceFile> streams, RawRead raw, const std::string& cacheName)
+        : root(r), cache(r / cacheName), read(std::move(raw)) {
         std::sort(files.begin(), files.end(), [](const SourceFile& a, const SourceFile& b) { return a.offset < b.offset; });
         sources.resize(files.size());
 
@@ -1287,8 +1293,8 @@ std::string AssetCache::StorageWarning(const std::filesystem::path& root) {
            "with an error.";
 }
 
-AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read)
-    : impl(std::make_unique<Impl>(root, std::move(sources), std::move(streams), std::move(read))) {}
+AssetCache::AssetCache(const std::filesystem::path& root, std::vector<SourceFile> sources, std::vector<SourceFile> streams, RawRead read, const std::string& cacheName)
+    : impl(std::make_unique<Impl>(root, std::move(sources), std::move(streams), std::move(read), cacheName)) {}
 AssetCache::~AssetCache() = default;
 
 Status AssetCache::Read(uint64_t offset, uint8_t* out, size_t bytes) {
@@ -1527,6 +1533,27 @@ struct Game {
     DiscImage image;
     std::unique_ptr<AssetCache> cache;
     explicit Game(const char* root) : image(root) {
+        // Mods (PC): each set of replaced files has its own converted cache,
+        // so changing mods never mixes old conversions with new files. HD
+        // texture packs apply when textures bind (texture_replacement.cpp).
+        std::string cacheName = "cache";
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+        {
+            std::vector<std::string> unmatched;
+            const auto replacements = Mods::Replacements(PcPaths::Mods(), PcSettings::Get().enabledMods, image.FileNames(), &unmatched);
+
+            for (const auto& path : unmatched)
+                std::fprintf(stderr, "MH3 mods: %s matches no disc file; skipped\n", path.c_str());
+
+            if (!replacements.empty()) {
+                CheckStatus(image.ApplyReplacements(replacements));
+                std::fprintf(stderr, "MH3 mods: %zu disc files replaced by %zu enabled mods\n", replacements.size(), PcSettings::Get().enabledMods.size());
+            }
+
+            if (const auto mods = Mods::Fingerprint(replacements); !mods.empty())
+                cacheName = "cache-" + mods;
+        }
+#endif
         if (!image.Packed() || image.HasNativeTextureMap() || std::getenv("MH3_NATIVE_ASSET_DIR"))
             return;
 
@@ -1547,7 +1574,8 @@ struct Game {
         for (const auto& name : image.FileNames())
             if (name.rfind("16/srt/", 0) == 0)
                 streams.push_back({name, image.FileOffset(name), image.FileSize(name)});
-        cache = std::make_unique<AssetCache>(root, std::move(sources), std::move(streams), [this](uint64_t offset, uint8_t* output, size_t length) { return image.ReadRaw(offset, output, length); });
+        cache = std::make_unique<AssetCache>(
+            root, std::move(sources), std::move(streams), [this](uint64_t offset, uint8_t* output, size_t length) { return image.ReadRaw(offset, output, length); }, cacheName);
         image.SetReader([this](uint64_t offset, uint8_t* output, size_t length) { return cache->Read(offset, output, length); });
     }
 

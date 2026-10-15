@@ -23,11 +23,13 @@
 namespace aurora {
 namespace {
 NativeTexturePatch s_patch = nullptr;
+NativeTextureReplacer s_replacer = nullptr;
 
 // Budget resident texture storage separately from display/depth/offscreen
 // targets. GLES texel estimates exclude driver bookkeeping; GXM charges the
 // CDRAM image/palette layout. Backend fences retain evicted in-flight storage.
 constexpr size_t CacheBudget = 48u << 20;
+size_t s_budget = CacheBudget; // raised for HD texture packs
 struct Key {
   uintptr_t bytes;
   uint32_t asset, width, height, levels, format;
@@ -82,9 +84,9 @@ gl::SamplerDesc sampler(const NativeTextureSampler& source) {
 }
 
 void make_room(size_t bytes) {
-  if (bytes > CacheBudget)
+  if (bytes > s_budget)
     AURORA_THROW(std::runtime_error("Native texture exceeds resident cache budget"));
-  while (residentBytes > CacheBudget - bytes) {
+  while (residentBytes > s_budget - bytes) {
     auto victim = cache.end();
 
     for (auto it = cache.begin(); it != cache.end(); ++it)
@@ -300,6 +302,11 @@ size_t native_texture_source_size(uint32_t format, uint32_t width, uint32_t heig
 
 void set_native_texture_patch(NativeTexturePatch patch) { s_patch = patch; }
 
+void set_native_texture_replacer(NativeTextureReplacer replacer, size_t budget) {
+  s_replacer = replacer;
+  s_budget = std::max(budget, CacheBudget);
+}
+
 namespace {
 bool SameSource(const NativeTextureSource& a, const NativeTextureSource& b) {
   return a.bytes.data() == b.bytes.data() && a.bytes.size() == b.bytes.size() && a.palette.data() == b.palette.data() && a.palette.size() == b.palette.size() &&
@@ -473,6 +480,36 @@ void bind(uint32_t unit, const NativeTextureSource& source, const NativeTextureS
 
   gl::TexturePtr texture;
   size_t allocated = rgba_allocation(source);
+
+  // A texture pack image in place of the source: cached under the source's
+  // key like any other, so the pack is consulted once per resident texture.
+  if (s_replacer && source.format != NativeTextureFormatYuv420) {
+    NativeTextureReplacement replacement;
+
+    if (s_replacer(source, replacement) && replacement.levels && replacement.rgba.size() >= size_t(replacement.width) * replacement.height * 4) {
+      size_t bytes = 0;
+
+      for (unsigned mip = 0; mip < replacement.levels; ++mip)
+        bytes += size_t(std::max(replacement.width >> mip, 1u)) * std::max(replacement.height >> mip, 1u) * 4;
+
+      if (bytes <= replacement.rgba.size() && bytes <= s_budget) {
+        make_room(bytes);
+        texture = gl::create_texture(replacement.width, replacement.height, replacement.levels, gl::Format::RGBA8, "Native replacement texture");
+        size_t offset = 0;
+
+        for (unsigned mip = 0; mip < replacement.levels; ++mip) {
+          const unsigned w = std::max(replacement.width >> mip, 1u), h = std::max(replacement.height >> mip, 1u);
+          gl::upload_texture(*texture, mip, 0, 0, w, h, replacement.rgba.data() + offset, w * 4);
+          offset += size_t(w) * h * 4;
+        }
+
+        const auto [entry, inserted] = cache.try_emplace(key, Entry{texture, bytes, ++serial, source.owner, source.owner_bytes});
+        residentBytes += bytes;
+        remember(entry->second, publish(texture));
+        return;
+      }
+    }
+  }
 
   if (offline) {
     allocated = offline_allocation(offlineInfo);

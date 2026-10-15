@@ -46,6 +46,21 @@ class DiscImage {
     // Partition bytes without native texture tags or quest overrides.
     Status ReadRaw(uint64_t offset, uint8_t* output, size_t length) const;
 
+    // Mods (mods.h): each named file's contents come from `path` instead, at
+    // any size. The replaced files move past the partition and the file table
+    // (ReadRaw of its range, FstBytes) gives their new offsets and sizes, so
+    // the game, the asset cache and DVDOpen all see the replacement. Before
+    // any read; once.
+    struct Replacement {
+        std::string name; // FST path, as FileNames lists it
+        std::filesystem::path path;
+        uint64_t size;
+    };
+    Status ApplyReplacements(const std::vector<Replacement>& replacements);
+
+    // The file table as the game must see it (with replacements applied).
+    const std::vector<uint8_t>& FstBytes() const;
+
   private:
     struct Extent {
         uint64_t offset, size;
@@ -54,6 +69,11 @@ class DiscImage {
 
     std::vector<Extent> extents;
     std::map<std::string, std::pair<uint64_t, uint32_t>> fileEntries;
+    std::map<std::string, uint32_t> fstIndices; // FST entry of each file
+    uint64_t fstOffset = 0, modBase = 0;
+    std::vector<uint8_t> fstBytes, patchedFst;
+    std::vector<Extent> modExtents; // replaced files, by offset from modBase
+    Status ReadUnmodified(uint64_t offset, uint8_t* output, size_t length) const;
     std::unique_ptr<DiscFile> partition;
     std::unique_ptr<RomImage> rom;
     Reader reader;

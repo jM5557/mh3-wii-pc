@@ -24,6 +24,11 @@
 #include "game_step.h"
 #include "guest_threads.h"
 #include "memory.h"
+#include "pc_settings.h"
+#if defined(MH3_HAS_AURORA) && !defined(__vita__) && !defined(__EMSCRIPTEN__)
+#include "pc_menu.h"
+#define MH3_PC_MENU 1
+#endif
 #include "timebase_contract.h"
 #include "video_interface.h"
 #include <algorithm>
@@ -175,7 +180,11 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
     // Each step advances the game by the host time the previous one took, with
     // no fixed rate; frames through the frame limit by the display's
     // (DisplayStep).
-    bool variableStep = true;
+    // The PC frame-rate setting: Exact30 runs the game's own fixed 30 Hz
+    // steps (every action at exactly the Wii's speed); Capped holds frames
+    // to at most fpsCap a second (pc_settings.h).
+    const auto& pc = PcSettings::Get();
+    bool variableStep = pc.frameRate != PcSettings::FrameRate::Exact30;
 #ifdef MH3_DEVELOPMENT
     // MH3_VARIABLE_STEP=0: the game's own fixed steps (its retrace budget).
     static const bool variable = [] {
@@ -186,10 +195,23 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
 #endif
     // 0x8003F588, an inlined getter. SetSystemVcnt clamps it to >= 1.
     const int32_t budget = std::max<int32_t>(1, int32_t(Memory::Read32(at(kRetracesPerFrame))));
-    const auto now = Clock::now();
+    auto now = Clock::now();
 
     if (!started)
         frameEnd = now - budget * period;
+
+    // Capped: wait out the rest of the frame's share of a second (pumping
+    // devices, as the retrace waits do) before measuring the step.
+    if (variableStep && started && pc.frameRate == PcSettings::FrameRate::Capped && pc.fpsCap > 0) {
+        const auto minimum = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / pc.fpsCap));
+
+        if (now - frameEnd < minimum) {
+            const CpuContext frame = *ctx;
+            sleepUntil(frameEnd + minimum);
+            *ctx = frame;
+            now = Clock::now();
+        }
+    }
 
     started = true;
     GameStep::SetVariable(variableStep);
@@ -315,6 +337,11 @@ extern "C" void MH3_FramePacer(CpuContext* ctx) {
 #endif
     Memory::Write32(at(kFrameCount), Memory::Read32(at(kFrameCount)) + 1);
     Memory::Write32(at(kRetracesThisFrame), 0);
+#ifdef MH3_PC_MENU
+    // The PC menu and FPS counter over the next presented frames, and the
+    // enabled Gecko codes (once a frame, as the Wii's code handler).
+    PcMenu::Frame();
+#endif
 
     *ctx = saved;
 }

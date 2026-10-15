@@ -175,6 +175,35 @@ stick, IJKL = right stick, arrows = D-pad, Enter = Plus; SDL gamepads work too.
 Runtime options: [flags](docs/flags.md); debugging and profiling:
 [docs](docs/README.md).
 
+### In-game menu, mods and HD textures
+
+Press **F1** (or **L3 + R3** on a gamepad, including the Steam Deck) for the
+settings menu. It works with mouse, keyboard or gamepad. Full guide:
+[docs/pc-features.md](docs/pc-features.md).
+
+- **Graphics**: windowed, borderless or exclusive fullscreen; render
+  resolution up to 8× the Wii's; MSAA; anisotropic filtering; widescreen;
+  an FPS counter.
+- **Frame rate**: unlocked by default, capped, unlimited, or **30 fps
+  (original timing)**. The 30 fps mode runs every action at exactly the Wii's
+  speed, for anything that still runs fast unlocked.
+- **Controls**: choose the gamepad (XInput, DirectInput, PlayStation, Switch,
+  Steam Input, the Deck), and rebind every Classic Controller input with two
+  keyboard/mouse and two gamepad sources each. Mouse look, dead zone, swap
+  sticks. Optional Wii Remote support (with a Classic Controller or Nunchuk)
+  through SDL's Wii driver.
+- **Mods**: folders of replacement game files in `mods/`, at any size,
+  enabled and ordered in the menu.
+- **HD textures**: Dolphin texture packs for RMHP08 in
+  `Load/Textures/RMHP08/` (DDS uncompressed/BC1–BC7, or PNG). Texture
+  dumping for making packs.
+- **Cheats**: the native cheat list, remembered between runs, plus Gecko
+  codes from Dolphin `.ini` files in `codes/`. Only data codes; instruction
+  patches can't apply to recompiled code.
+
+Settings are kept in `saves/settings.ini`. With the AppImage, everything is
+under `~/.local/share/mh3-wii/`.
+
 ## License
 
 The translator and the code derived from WiiCompiled are GPLv3 (`LICENSE`,

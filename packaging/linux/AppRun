@@ -1,12 +1,15 @@
 #!/bin/bash
 # Monster Hunter Tri (mh3-wii) AppImage launcher. Data lives in
-# ${XDG_DATA_HOME:-~/.local/share}/mh3-wii: saves/, disc/ (metadata and the
-# converted-asset cache) and mh3.log. Arguments go to MH3 (--village,
+# ${XDG_DATA_HOME:-~/.local/share}/mh3-wii: saves/ (with settings.ini), disc/
+# (metadata and the converted-asset cache), mods/, codes/, Load/Textures/RMHP08
+# and mh3.log. Arguments go to MH3 (--village,
 # --list quests, --rom <image>, ...).
 HERE="$(dirname "$(readlink -f "$0")")"
 data="${XDG_DATA_HOME:-$HOME/.local/share}/mh3-wii"
 # Not disc/: MH3 publishes it on the first --rom and refuses an existing one.
 mkdir -p "$data/saves"
+# Player content (docs/pc-features.md): mods, Gecko codes, Dolphin-format HD texture packs.
+mkdir -p "$data/mods" "$data/codes" "$data/Load/Textures/RMHP08"
 rmdir "$data/disc" 2>/dev/null || true   # an empty disc/ left by an older launcher
 export MH3_USER_DIR="${MH3_USER_DIR:-$data/saves}"
 export MH3_DISC_HOME="${MH3_DISC_HOME:-$data/disc}"

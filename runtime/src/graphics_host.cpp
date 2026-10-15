@@ -3,6 +3,11 @@
 #include "gx_panic.h"
 #include "native_graphics.h"
 #include "msaa.h"
+#include "pc_graphics.h"
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+#include "pc_paths.h"
+#include "pc_settings.h"
+#endif
 #include "upscaling.h"
 #include "model_cull.h"
 #include "scene_cull.h"
@@ -134,6 +139,54 @@ float RenderScale() {
     return upscaling ? 0.f : 1.f;
 }
 
+// The render target's size: the PC menu's resolution (pc_settings.h), else
+// the Vita display surface at RenderScale. Game thread; the renderer resizes
+// at its next frame boundary.
+void ApplyRenderResolution() {
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+    const int resolution = PcSettings::Get().resolution;
+#ifdef MH3_DEVELOPMENT
+    const bool environment = std::getenv("MH3_RENDER_SCALE") != nullptr;
+#else
+    const bool environment = false;
+#endif
+    if (!environment && resolution < 0) {
+        // The window's own pixels: the target follows the window.
+        aurora_set_native_surface_size(0, 0);
+        VISetFrameBufferScale(0.f);
+        return;
+    }
+
+    if (!environment && resolution > 0) {
+        // N times the Wii's 640x448, at the display surface's aspect.
+        aurora_set_native_surface_size(DisplayWidth, DisplayHeight);
+        VISetFrameBufferScale(float(resolution));
+        return;
+    }
+#endif
+    aurora_set_native_surface_size(DisplayWidth, DisplayHeight);
+    VISetFrameBufferScale(RenderScale());
+}
+
+void ApplyDisplayMode() {
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+    if (!initialized)
+        return;
+
+    switch (PcSettings::Get().displayMode) {
+    case PcSettings::DisplayMode::Windowed:
+        aurora_set_display_mode(AURORA_DISPLAY_MODE_WINDOWED);
+        break;
+    case PcSettings::DisplayMode::Borderless:
+        aurora_set_display_mode(AURORA_DISPLAY_MODE_BORDERLESS);
+        break;
+    case PcSettings::DisplayMode::Fullscreen:
+        aurora_set_display_mode(AURORA_DISPLAY_MODE_EXCLUSIVE);
+        break;
+    }
+#endif
+}
+
 // Event polling and all graphics submission belong to the game thread.
 
 void FlushHostEfbPokes() {
@@ -189,6 +242,14 @@ void ShutdownGraphics() {
     }
 }
 } // namespace
+
+void PcApplyRenderResolution() {
+    ApplyRenderResolution();
+}
+
+void PcApplyDisplayMode() {
+    ApplyDisplayMode();
+}
 
 // Opens the texture packs the asset cache hands on while the game loads, one
 // at a time, reading each pack's payloads into memory (aurora's native
@@ -339,6 +400,20 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
 #endif
     config.msaa = samples;
     config.maxTextureAnisotropy = 1;
+#if !defined(__vita__) && !defined(__EMSCRIPTEN__)
+    // The PC menu's anisotropic filtering and display mode (pc_settings.h).
+    config.maxTextureAnisotropy = PcSettings::Get().anisotropy;
+
+    if (PcSettings::Get().displayMode != PcSettings::DisplayMode::Windowed)
+        config.startFullscreen = true;
+
+    // Dolphin-format HD texture packs and dumps, in Dolphin's folder layout.
+    const auto texturePacks = PcPaths::Textures().string(), textureDumps = PcPaths::TextureDumps().string();
+    config.allowTextureReplacements = PcSettings::Get().hdTextures;
+    config.allowTextureDumps = PcSettings::Get().dumpTextures;
+    config.textureReplacementPath = texturePacks.c_str();
+    config.textureDumpPath = textureDumps.c_str();
+#endif
     const auto info = aurora_initialize(argc, argv, &config);
 
     if (info.initializationStatus != AURORA_INITIALIZATION_SUCCESS)
@@ -346,6 +421,8 @@ void InitializeGraphics(int argc, char** argv, bool loadNativeAssets = true) {
 
     initialized = true;
     std::atexit(ShutdownGraphics);
+    // startFullscreen opens borderless; exclusive fullscreen is set here.
+    ApplyDisplayMode();
 
     if (loadNativeAssets)
         OpenNativeAssets();
@@ -482,9 +559,8 @@ void InitializeNativeGraphics(uint32_t width, uint32_t height, bool load_native_
     if (!aurora_configure_native_target(width, height))
         MH3_THROW(std::runtime_error("Native graphics target has zero dimensions"));
 
-    aurora_set_native_surface_size(DisplayWidth, DisplayHeight);
+    ApplyRenderResolution();
     aurora_set_native_target_aspect(DisplayAspect(displayWidescreen));
-    VISetFrameBufferScale(RenderScale());
     char name[] = "MH3";
     char* argv[]{name, nullptr};
     InitializeGraphics(1, argv, load_native_assets);

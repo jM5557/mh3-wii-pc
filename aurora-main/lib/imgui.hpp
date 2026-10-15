@@ -4,8 +4,8 @@
 
 union SDL_Event;
 
-// The OpenGL ES renderer has no ImGui backend; these keep the context alive
-// for embedders that link ImGui, but nothing is drawn.
+// The ImGui context behind aurora/imgui.h: input through imgui_impl_sdl3 on
+// the event thread, frames drawn by the GLES renderer (gl/imgui_renderer.cpp).
 namespace aurora::imgui {
 void create_context() noexcept;
 void initialize() noexcept;
